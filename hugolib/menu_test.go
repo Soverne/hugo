@@ -659,7 +659,7 @@ func findDescendantTestMenuEntry(parent *MenuEntry, id string, matcher func(me *
 	return found
 }
 
-func setupTestMenuState(s *Site, t *testing.T) {
+func setupTestMenuState(t *testing.T) {
 	menus, err := tomlToMap(confMenu1)
 
 	if err != nil {
@@ -672,7 +672,8 @@ func setupTestMenuState(s *Site, t *testing.T) {
 
 func setupMenuTests(t *testing.T, pageSources []source.ByteSource) *Site {
 	s := createTestSite(pageSources)
-	setupTestMenuState(s, t)
+
+	setupTestMenuState(t)
 	testSiteSetup(s, t)
 
 	return s
@@ -681,18 +682,17 @@ func setupMenuTests(t *testing.T, pageSources []source.ByteSource) *Site {
 func createTestSite(pageSources []source.ByteSource) *Site {
 	hugofs.InitMemFs()
 
-	s := &Site{
-		Source: &source.InMemorySource{ByteSource: pageSources},
-		Lang:   newDefaultLanguage(),
+	return &Site{
+		Source:   &source.InMemorySource{ByteSource: pageSources},
+		Language: newDefaultLanguage(),
 	}
-	return s
+
 }
 
 func testSiteSetup(s *Site, t *testing.T) {
-	s.Menus = Menus{}
-	s.initializeSiteInfo()
-
-	createPagesAndMeta(t, s)
+	if err := buildSiteSkipRender(s); err != nil {
+		t.Fatalf("Sites build failed: %s", err)
+	}
 }
 
 func tomlToMap(s string) (map[string]interface{}, error) {

@@ -45,26 +45,12 @@ func TestSitemapOutput(t *testing.T) {
 	viper.Set("baseurl", "http://auth/bub/")
 
 	s := &Site{
-		Source: &source.InMemorySource{ByteSource: weightedSources},
-		Lang:   newDefaultLanguage(),
+		Source:   &source.InMemorySource{ByteSource: weightedSources},
+		Language: newDefaultLanguage(),
 	}
 
-	s.initializeSiteInfo()
-
-	s.prepTemplates("sitemap.xml", SITEMAP_TEMPLATE)
-
-	createPagesAndMeta(t, s)
-
-	if err := s.renderHomePage(); err != nil {
-		t.Fatalf("Unable to RenderHomePage: %s", err)
-	}
-
-	if err := s.renderSitemap(); err != nil {
-		t.Fatalf("Unable to RenderSitemap: %s", err)
-	}
-
-	if err := s.renderRobotsTXT(); err != nil {
-		t.Fatalf("Unable to RenderRobotsTXT :%s", err)
+	if err := buildAndRenderSite(s, "sitemap.xml", SITEMAP_TEMPLATE); err != nil {
+		t.Fatalf("Failed to build site: %s", err)
 	}
 
 	sitemapFile, err := hugofs.Destination().Open("sitemap.xml")

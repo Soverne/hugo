@@ -92,22 +92,13 @@ func TestPageCount(t *testing.T) {
 	viper.Set("uglyurls", false)
 	viper.Set("paginate", 10)
 	s := &Site{
-		Source: &source.InMemorySource{ByteSource: urlFakeSource},
-		Lang:   newDefaultLanguage(),
-	}
-	s.initializeSiteInfo()
-	s.prepTemplates("indexes/blue.html", indexTemplate)
-
-	createPagesAndMeta(t, s)
-
-	if err := s.renderSectionLists(); err != nil {
-		t.Errorf("Unable to render section lists: %s", err)
+		Source:   &source.InMemorySource{ByteSource: urlFakeSource},
+		Language: newDefaultLanguage(),
 	}
 
-	if err := s.renderAliases(); err != nil {
-		t.Errorf("Unable to render site lists: %s", err)
+	if err := buildAndRenderSite(s, "indexes/blue.html", indexTemplate); err != nil {
+		t.Fatalf("Failed to build site: %s", err)
 	}
-
 	_, err := hugofs.Destination().Open("blue")
 	if err != nil {
 		t.Errorf("No indexed rendered.")

@@ -54,16 +54,12 @@ func TestRSSOutput(t *testing.T) {
 
 	hugofs.InitMemFs()
 	s := &Site{
-		Source: &source.InMemorySource{ByteSource: weightedSources},
-		Lang:   newDefaultLanguage(),
+		Source:   &source.InMemorySource{ByteSource: weightedSources},
+		Language: newDefaultLanguage(),
 	}
-	s.initializeSiteInfo()
-	s.prepTemplates("rss.xml", rssTemplate)
 
-	createPagesAndMeta(t, s)
-
-	if err := s.renderHomePage(); err != nil {
-		t.Fatalf("Unable to RenderHomePage: %s", err)
+	if err := buildAndRenderSite(s, "rss.xml", rssTemplate); err != nil {
+		t.Fatalf("Failed to build site: %s", err)
 	}
 
 	file, err := hugofs.Destination().Open(rssURI)

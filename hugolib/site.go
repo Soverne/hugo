@@ -22,7 +22,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +53,10 @@ var testMode bool
 
 var defaultTimer *nitro.B
 
-var distinctErrorLogger = helpers.NewDistinctErrorLogger()
+var (
+	distinctErrorLogger    = helpers.NewDistinctErrorLogger()
+	distinctFeedbackLogger = helpers.NewDistinctFeedbackLogger()
+)
 
 // Site contains all the information relevant for constructing a static
 // site.  The basic flow of information is as follows:
@@ -87,22 +89,23 @@ type Site struct {
 	targets        targetList
 	targetListInit sync.Once
 	RunMode        runmode
-	Multilingual   *Multilingual
-	draftCount     int
-	futureCount    int
-	expiredCount   int
-	Data           map[string]interface{}
-	Lang           *Language
+	// TODO(bep ml remove
+	Multilingual *Multilingual
+	draftCount   int
+	futureCount  int
+	expiredCount int
+	Data         map[string]interface{}
+	Language     *Language
 }
 
 // TODO(bep) multilingo
 // Reset returns a new Site prepared for rebuild.
 func (s *Site) Reset() *Site {
-	return &Site{Lang: s.Lang, Multilingual: s.Multilingual}
+	return &Site{Language: s.Language, Multilingual: s.Multilingual}
 }
 
 func NewSite(lang *Language) *Site {
-	return &Site{Lang: lang}
+	return &Site{Language: lang}
 }
 
 func newSiteDefaultLang() *Site {
@@ -396,44 +399,7 @@ func (s *Site) timerStep(step string) {
 	s.timer.Step(step)
 }
 
-func (s *Site) preRender() error {
-	return tpl.SetTranslateLang(s.Lang.Lang)
-}
-
-func (s *Site) Build() (err error) {
-
-	if err = s.Process(); err != nil {
-		return
-	}
-
-	if err = s.preRender(); err != nil {
-		return
-	}
-
-	if err = s.Render(); err != nil {
-		// Better reporting when the template is missing (commit 2bbecc7b)
-		jww.ERROR.Printf("Error rendering site: %s", err)
-
-		jww.ERROR.Printf("Available templates:")
-		var keys []string
-		for _, template := range s.Tmpl.Templates() {
-			if name := template.Name(); name != "" {
-				keys = append(keys, name)
-			}
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			jww.ERROR.Printf("\t%s\n", k)
-		}
-
-		return
-	}
-
-	return nil
-}
-
 func (s *Site) ReBuild(events []fsnotify.Event) error {
-	// TODO(bep) multilingual this needs some rethinking with multiple sites
 
 	s.timerStep("initialize rebuild")
 
@@ -442,6 +408,7 @@ func (s *Site) ReBuild(events []fsnotify.Event) error {
 	sourceChanged := []fsnotify.Event{}
 	tmplChanged := []fsnotify.Event{}
 	dataChanged := []fsnotify.Event{}
+	i18nChanged := []fsnotify.Event{}
 
 	var err error
 
@@ -461,10 +428,14 @@ func (s *Site) ReBuild(events []fsnotify.Event) error {
 			logger.Println("Data changed", ev.Name)
 			dataChanged = append(dataChanged, ev)
 		}
+		if strings.HasPrefix(ev.Name, s.absI18nDir()) {
+			logger.Println("i18n changed", ev.Name)
+			i18nChanged = append(dataChanged, ev)
+		}
 	}
 
 	if len(tmplChanged) > 0 {
-		s.prepTemplates()
+		s.prepTemplates(nil)
 		s.Tmpl.PrintErrors()
 		s.timerStep("template prep")
 	}
@@ -473,7 +444,13 @@ func (s *Site) ReBuild(events []fsnotify.Event) error {
 		s.readDataFromSourceFS()
 	}
 
+	if len(i18nChanged) > 0 {
+		// TODO(bep ml
+		s.readI18nSources()
+	}
+
 	// we reuse the state, so have to do some cleanup before we can rebuild.
+	// TODO(bep) ml
 	s.resetPageBuildState()
 
 	// If a content file changes, we need to reload only it and re-render the entire site.
@@ -573,10 +550,8 @@ func (s *Site) ReBuild(events []fsnotify.Event) error {
 
 	s.timerStep("read & convert pages from source")
 
-	// FIXME: does this go inside the next `if` statement ?
-	s.setupTranslations()
-
 	if len(sourceChanged) > 0 {
+		// TODO(bep) ml order
 		s.setupPrevNext()
 		if err = s.buildSiteMeta(); err != nil {
 			return err
@@ -584,34 +559,12 @@ func (s *Site) ReBuild(events []fsnotify.Event) error {
 		s.timerStep("build taxonomies")
 	}
 
-	if err := s.preRender(); err != nil {
-		return err
-	}
+	return nil
 
-	// Once the appropriate prep step is done we render the entire site
-	if err = s.Render(); err != nil {
-		// Better reporting when the template is missing (commit 2bbecc7b)
-		jww.ERROR.Printf("Error rendering site: %s", err)
-		jww.ERROR.Printf("Available templates:")
-		var keys []string
-		for _, template := range s.Tmpl.Templates() {
-			if name := template.Name(); name != "" {
-				keys = append(keys, name)
-			}
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			jww.ERROR.Printf("\t%s\n", k)
-		}
-
-		return nil
-	}
-
-	return err
 }
 
 func (s *Site) Analyze() error {
-	if err := s.Process(); err != nil {
+	if err := s.PreProcess(BuildCfg{}); err != nil {
 		return err
 	}
 	return s.ShowPlan(os.Stdout)
@@ -625,15 +578,15 @@ func (s *Site) loadTemplates() {
 	}
 }
 
-func (s *Site) prepTemplates(additionalNameValues ...string) error {
+func (s *Site) prepTemplates(withTemplate func(templ tpl.Template) error) error {
 	s.loadTemplates()
 
-	for i := 0; i < len(additionalNameValues); i += 2 {
-		err := s.Tmpl.AddTemplate(additionalNameValues[i], additionalNameValues[i+1])
-		if err != nil {
+	if withTemplate != nil {
+		if err := withTemplate(s.Tmpl); err != nil {
 			return err
 		}
 	}
+
 	s.Tmpl.MarkReady()
 
 	return nil
@@ -702,6 +655,23 @@ func readData(f *source.File) (interface{}, error) {
 	}
 }
 
+func (s *Site) readI18nSources() error {
+
+	i18nSources := []source.Input{&source.Filesystem{Base: s.absI18nDir()}}
+
+	themeI18nDir, err := helpers.GetThemeI18nDirPath()
+	if err == nil {
+		// TODO(bep) multilingo what is this?
+		i18nSources = []source.Input{&source.Filesystem{Base: themeI18nDir}, i18nSources[0]}
+	}
+
+	if err = loadI18n(i18nSources); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *Site) readDataFromSourceFS() error {
 	dataSources := make([]source.Input, 0, 2)
 	dataSources = append(dataSources, &source.Filesystem{Base: s.absDataDir()})
@@ -717,12 +687,12 @@ func (s *Site) readDataFromSourceFS() error {
 	return err
 }
 
-func (s *Site) Process() (err error) {
+func (s *Site) PreProcess(config BuildCfg) (err error) {
 	s.timerStep("Go initialization")
 	if err = s.initialize(); err != nil {
 		return
 	}
-	s.prepTemplates()
+	s.prepTemplates(config.withTemplate)
 	s.Tmpl.PrintErrors()
 	s.timerStep("initialize & template prep")
 
@@ -730,24 +700,23 @@ func (s *Site) Process() (err error) {
 		return
 	}
 
-	i18nSources := []source.Input{&source.Filesystem{Base: s.absI18nDir()}}
-
-	themeI18nDir, err := helpers.GetThemeI18nDirPath()
-	if err == nil {
-		// TODO(bep) multilingo what is this?
-		i18nSources = []source.Input{&source.Filesystem{Base: themeI18nDir}, i18nSources[0]}
-	}
-
-	if err = loadI18n(i18nSources); err != nil {
+	if err = s.readI18nSources(); err != nil {
 		return
 	}
+
 	s.timerStep("load i18n")
+	return s.createPages()
 
-	if err = s.createPages(); err != nil {
+}
+
+func (s *Site) PostProcess() (err error) {
+
+	if err = tpl.SetTranslateLang(s.Language.Lang); err != nil {
 		return
 	}
 
-	s.setupTranslations()
+	// TODO(bep) ml
+	//s.setupTranslations()
 	s.setupPrevNext()
 
 	if err = s.buildSiteMeta(); err != nil {
@@ -767,27 +736,6 @@ func (s *Site) setupPrevNext() {
 			page.Prev = s.Pages[i-1]
 		}
 	}
-}
-
-func (s *Site) setupTranslations() {
-	if !s.multilingualEnabled() {
-		s.Pages = s.AllPages
-		return
-	}
-
-	currentLang := s.currentLanguageString()
-
-	allTranslations := pagesToTranslationsMap(s.Multilingual, s.AllPages)
-	assignTranslationsToPages(allTranslations, s.AllPages)
-
-	var currentLangPages Pages
-	for _, p := range s.AllPages {
-		if p.Lang() == "" || strings.HasPrefix(currentLang, p.lang) {
-			currentLangPages = append(currentLangPages, p)
-		}
-	}
-
-	s.Pages = currentLangPages
 }
 
 func (s *Site) Render() (err error) {
@@ -831,6 +779,15 @@ func (s *Site) Initialise() (err error) {
 }
 
 func (s *Site) initialize() (err error) {
+	defer s.initializeSiteInfo()
+	s.Menus = Menus{}
+
+	// TODO(bep) ml
+	// May be supplied in tests.
+	if s.Source != nil {
+		return
+	}
+
 	if err = s.checkDirectories(); err != nil {
 		return err
 	}
@@ -842,17 +799,13 @@ func (s *Site) initialize() (err error) {
 		Base:       s.absContentDir(),
 	}
 
-	s.Menus = Menus{}
-
-	s.initializeSiteInfo()
-
 	return
 }
 
 func (s *Site) initializeSiteInfo() {
 
 	var (
-		lang      *Language = s.Lang
+		lang      *Language = s.Language
 		languages Languages
 	)
 
@@ -959,7 +912,6 @@ func (s *Site) readPagesFromSource() chan error {
 	}
 
 	errs := make(chan error)
-
 	if len(s.Source.Files()) < 1 {
 		close(errs)
 		return errs
@@ -1312,7 +1264,9 @@ func (s *Site) assembleMenus() {
 		if sectionPagesMenu != "" {
 			if _, ok := sectionPagesMenus[p.Section()]; !ok {
 				if p.Section() != "" {
-					me := MenuEntry{Identifier: p.Section(), Name: helpers.MakeTitle(helpers.FirstUpper(p.Section())), URL: s.Info.createNodeMenuEntryURL("/" + p.Section() + "/")}
+					me := MenuEntry{Identifier: p.Section(),
+						Name: helpers.MakeTitle(helpers.FirstUpper(p.Section())),
+						URL:  s.Info.createNodeMenuEntryURL(p.addMultilingualWebPrefix("/"+p.Section()) + "/")}
 					if _, ok := flat[twoD{sectionPagesMenu, me.KeyName()}]; ok {
 						// menu with same id defined in config, let that one win
 						continue
@@ -1998,7 +1952,7 @@ func (s *Site) Stats(t0 time.Time) {
 	}
 
 	// TODO(bep) will always have lang. Not sure this should always be printed.
-	jww.FEEDBACK.Printf("rendered lang %q in %v ms\n", s.Lang.Lang, int(1000*time.Since(t0).Seconds()))
+	jww.FEEDBACK.Printf("rendered lang %q in %v ms\n", s.Language.Lang, int(1000*time.Since(t0).Seconds()))
 
 }
 
@@ -2021,7 +1975,7 @@ func (s *Site) newNode() *Node {
 	return &Node{
 		Data:     make(map[string]interface{}),
 		Site:     &s.Info,
-		language: s.Lang,
+		language: s.Language,
 	}
 }
 
@@ -2122,17 +2076,24 @@ func (s *Site) renderAndWritePage(name string, dest string, d interface{}, layou
 	transformer.Apply(outBuffer, renderBuffer, path)
 
 	if outBuffer.Len() == 0 {
+
 		jww.WARN.Printf("%q is rendered empty\n", dest)
 		if dest == "/" {
-			jww.FEEDBACK.Println("=============================================================")
-			jww.FEEDBACK.Println("Your rendered home page is blank: /index.html is zero-length")
-			jww.FEEDBACK.Println(" * Did you specify a theme on the command-line or in your")
-			jww.FEEDBACK.Printf("   %q file?  (Current theme: %q)\n", filepath.Base(viper.ConfigFileUsed()), viper.GetString("Theme"))
+			debugAddend := ""
 			if !viper.GetBool("Verbose") {
-				jww.FEEDBACK.Println(" * For more debugging information, run \"hugo -v\"")
+				debugAddend = "* For more debugging information, run \"hugo -v\""
 			}
-			jww.FEEDBACK.Println("=============================================================")
+			distinctFeedbackLogger.Printf(`=============================================================
+Your rendered home page is blank: /index.html is zero-length
+ * Did you specify a theme on the command-line or in your
+   %q file?  (Current theme: %q)
+ %s
+=============================================================`,
+				filepath.Base(viper.ConfigFileUsed()),
+				viper.GetString("Theme"),
+				debugAddend)
 		}
+
 	}
 
 	if err == nil {

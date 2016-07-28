@@ -45,20 +45,17 @@ func TestDefaultHandler(t *testing.T) {
 	viper.Set("verbose", true)
 
 	s := &Site{
-		Source:  &source.InMemorySource{ByteSource: sources},
-		targets: targetList{page: &target.PagePub{UglyURLs: true}},
-		Lang:    NewLanguage("en"),
+		Source:   &source.InMemorySource{ByteSource: sources},
+		targets:  targetList{page: &target.PagePub{UglyURLs: true}},
+		Language: NewLanguage("en"),
 	}
 
-	s.initializeSiteInfo()
-
-	s.prepTemplates(
+	if err := buildAndRenderSite(s,
 		"_default/single.html", "{{.Content}}",
 		"head", "<head><script src=\"script.js\"></script></head>",
-		"head_abs", "<head><script src=\"/script.js\"></script></head>")
-
-	// From site_test.go
-	createAndRenderPages(t, s)
+		"head_abs", "<head><script src=\"/script.js\"></script></head>"); err != nil {
+		t.Fatalf("Failed to render site: %s", err)
+	}
 
 	tests := []struct {
 		doc      string

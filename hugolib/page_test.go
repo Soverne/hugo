@@ -569,7 +569,7 @@ func TestPageWithDelimiter(t *testing.T) {
 
 func TestPageWithShortCodeInSummary(t *testing.T) {
 	s := new(Site)
-	s.prepTemplates()
+	s.prepTemplates(nil)
 	p, _ := NewPage("simple.md")
 	_, err := p.ReadFrom(strings.NewReader(simplePageWithShortcodeInSummary))
 	if err != nil {

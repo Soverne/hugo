@@ -39,26 +39,12 @@ func TestRobotsTXTOutput(t *testing.T) {
 	viper.Set("enableRobotsTXT", true)
 
 	s := &Site{
-		Source: &source.InMemorySource{ByteSource: weightedSources},
-		Lang:   newDefaultLanguage(),
+		Source:   &source.InMemorySource{ByteSource: weightedSources},
+		Language: newDefaultLanguage(),
 	}
 
-	s.initializeSiteInfo()
-
-	s.prepTemplates("robots.txt", robotTxtTemplate)
-
-	createPagesAndMeta(t, s)
-
-	if err := s.renderHomePage(); err != nil {
-		t.Fatalf("Unable to RenderHomePage: %s", err)
-	}
-
-	if err := s.renderSitemap(); err != nil {
-		t.Fatalf("Unable to RenderSitemap: %s", err)
-	}
-
-	if err := s.renderRobotsTXT(); err != nil {
-		t.Fatalf("Unable to RenderRobotsTXT :%s", err)
+	if err := buildAndRenderSite(s, "robots.txt", robotTxtTemplate); err != nil {
+		t.Fatalf("Failed to build site: %s", err)
 	}
 
 	robotsFile, err := hugofs.Destination().Open("robots.txt")
